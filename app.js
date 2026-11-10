@@ -1,9 +1,9 @@
 import {parseInput,parseMaster,parseMedia} from './src/core.mjs';
+import {finalizeMp4Duration} from './src/mp4-duration.mjs';
 const $=s=>document.querySelector(s);
-const EXAMPLE='https://tv.cctv.com/2026/11/05/VIDEW9nYaP9C5dIzPQWfIYEV261105.shtml?spm=C53156045404.PKXC0xLPAnP9.0.0';
 let info,variants,controller,worker,blobURL,busy=false;
 function status(text,state='info'){$('#status').textContent=text;$('#status').dataset.state=state;}
-function setBusy(value){busy=value;$('#parse').disabled=value;$('#url').disabled=value;$('#example').disabled=value;$('#download').disabled=value||!info;$('#quality').disabled=value;$('#cancel').hidden=!value;}
+function setBusy(value){busy=value;$('#parse').disabled=value;$('#url').disabled=value;$('#download').disabled=value||!info;$('#quality').disabled=value;$('#cancel').hidden=!value;}
 function progress(stage,value,detail){$('#progress-section').hidden=false;$('#stage').textContent=stage;$('#percent').textContent=`${Math.floor(value)}%`;$('#progress').value=value;$('#detail').textContent=detail;}
 function jsonp(url,signal){return new Promise((resolve,reject)=>{
  const callback='cctv_'+crypto.randomUUID().replaceAll('-','');const script=document.createElement('script');let timer;
@@ -24,7 +24,6 @@ async function request(url,signal,kind='text'){
  throw new Error(`无法读取央视视频资源（网络或跨域限制）。${last?.message||''}`);
 }
 function clearResult(){if(blobURL){URL.revokeObjectURL(blobURL);blobURL=null;}$('#preview').removeAttribute('src');$('#preview').load();$('#done').hidden=true;window.downloadResult=null;}
-$('#example').onclick=()=>{$('#url').value=EXAMPLE;$('#url').focus();};
 $('#cancel').onclick=()=>{controller?.abort();worker?.terminate();};
 $('#form').onsubmit=async e=>{
  e.preventDefault();if(busy)return;clearResult();info=null;$('#result').hidden=true;$('#progress-section').hidden=true;
@@ -82,13 +81,15 @@ $('#download').onclick=async()=>{
   const finished=wait('finished');worker.postMessage({type:'finish'});await finished;signal.throwIfAborted();
   progress('检查 MP4 播放能力',99,'正在确认音视频封装及实际分辨率…');
   if(!parts.length)throw new Error('没有生成音视频数据。');
-  const blob=new Blob(parts,{type:'video/mp4'});parts=[];
+  const blob=new Blob(parts,{type:'video/mp4'});
   const checked=await verifyVideo(blob,duration);signal.throwIfAborted();
   if(checked.width!==selected.width||checked.height!==selected.height)throw new Error('实际分辨率与所选画质不一致，已停止输出。');
-  window.downloadResult={blob,...checked};blobURL=URL.createObjectURL(blob);
+  const finalParts=parts.map((part,index)=>index===0?finalizeMp4Duration(part,checked.duration):part);
+  const finalBlob=new Blob(finalParts,{type:'video/mp4'});parts=[];
+  window.downloadResult={blob:finalBlob,...checked};blobURL=URL.createObjectURL(finalBlob);
   $('#save').href=blobURL;$('#save').download=info.title.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').slice(0,150)+'.mp4';
-  $('#preview').src=blobURL;$('#summary').textContent=`${checked.width} × ${checked.height} · ${(blob.size/1024/1024).toFixed(1)} MB · MP4 / H.264 + AAC`;
-  $('#done').hidden=false;progress('处理完成',100,`${segments.length} 个分片已完成 · 未重新压缩`);status('MP4 已生成并通过浏览器首帧解码检查。请播放预览确认画面后保存。','success');
+  $('#preview').src=blobURL;$('#summary').textContent=`${checked.width} × ${checked.height} · ${(finalBlob.size/1024/1024).toFixed(1)} MB · MP4 / H.264 + AAC`;
+  $('#done').hidden=false;progress('处理完成',100,`${segments.length} 个分片已完成 · 未重新压缩`);$('#save').click();status('MP4 已生成并通过浏览器首帧解码检查，已自动开始下载。可播放预览确认画面。','success');
  }catch(e){clearResult();status(signal.aborted?'已取消下载，未生成不完整文件。':e.message,'error');}
  finally{parts=[];signal.removeEventListener('abort',abort);worker?.terminate();worker=null;setBusy(false);}
 };

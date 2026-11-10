@@ -6,6 +6,11 @@ try{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(process.env.TEST_URL||'http://127.0.0.1:8768');
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'mobile page must not overflow');
+ assert.deepEqual(await page.evaluate(()=>({
+  example:document.querySelectorAll('#example').length,
+  explanation:[...document.querySelectorAll('details')].filter(el=>el.textContent.includes('为什么普通下载器可能花屏？')).length,
+  source:[...document.querySelectorAll('a')].filter(el=>el.textContent.includes('源代码')).length,
+ })),{example:0,explanation:0,source:0},'removed test link, explanation section and source link must not exist');
  await page.locator('#url').fill('https://tv.cctv.com.evil.com/VIDE123.shtml');await page.locator('#parse').click();
  await page.waitForFunction(()=>document.querySelector('#status').dataset.state==='error');
  assert.equal(await page.locator('#result').isVisible(),false);
@@ -13,7 +18,7 @@ try{
  let pendingArticle;
  const articleRoute='https://api.cntv.cn/Article/newContentInfo?*';
  await page.route(articleRoute,route=>{pendingArticle=route;});
- await page.locator('#example').click();
+ await page.locator('#url').fill('https://tv.cctv.com/2026/11/05/VIDEW9nYaP9C5dIzPQWfIYEV261105.shtml?spm=C53156045404.PKXC0xLPAnP9.0.0');
  const articleRequest=page.waitForRequest(url=>url.url().startsWith('https://api.cntv.cn/Article/newContentInfo?'));
  await page.locator('#parse').click();await articleRequest;
  assert.equal(await page.locator('#result').isVisible(),false);
@@ -24,7 +29,6 @@ try{
  assert.match(await page.locator('#status').innerText(),/已取消解析/);
  assert.equal(await page.locator('#cancel').isVisible(),false);
  assert.equal(await page.locator('#url').isEnabled(),true);
- assert.equal(await page.locator('#example').isEnabled(),true);
  assert.equal(await page.locator('#done').isVisible(),false);
  assert.equal(await page.evaluate(()=>document.querySelectorAll('script[src^="https://api.cntv.cn/Article/newContentInfo"]').length),0,'cancel removes the pending JSONP script');
  if(pendingArticle)await pendingArticle.abort().catch(()=>{});

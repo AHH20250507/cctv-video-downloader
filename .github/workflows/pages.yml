@@ -29,7 +29,7 @@ jobs:
         run: |
           mkdir -p _site/src _site/vendor
           cp index.html style.css app.js download-worker.js _site/
-          cp src/core.mjs _site/src/
+          cp src/core.mjs src/mp4-duration.mjs _site/src/
           cp vendor/*LICENSE* _site/vendor/
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5

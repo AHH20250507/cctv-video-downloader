@@ -1,31 +1,50 @@
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
-import { writeFile,mkdir } from 'node:fs/promises';
+import { writeFile,mkdir,stat,readFile } from 'node:fs/promises';
 const browser = await chromium.launch({channel:'msedge',headless:true});
 try {
- const page=await browser.newPage({viewport:{width:1440,height:960}});
- page.on('pageerror',e=>console.error('PAGE ERROR',e.message));
+ const page=await browser.newPage({viewport:{width:1440,height:960},acceptDownloads:true});
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(process.env.TEST_URL||'http://127.0.0.1:8768');
  await page.locator('#url').fill('https://tv.cctv.com/2026/11/05/VIDEW9nYaP9C5dIzPQWfIYEV261105.shtml?spm=C53156045404.PKXC0xLPAnP9.0.0');
  await page.locator('#parse').click();
- await page.waitForFunction(()=>document.querySelector('#download')?.disabled===false,null,{timeout:60000});
+ await page.waitForFunction(()=>document.querySelector('#download')?.disabled===false||document.querySelector('#status')?.dataset.state==='error',null,{timeout:60000});
+ assert.equal(await page.locator('#download').isEnabled(),true,await page.locator('#status').innerText());
  assert.match(await page.locator('#quality').inputValue(),/2000/);
+ let automaticDownload;
+ page.on('download',download=>{automaticDownload=download;});
+ const downloadPromise=page.waitForEvent('download',{timeout:480000});
+ void downloadPromise.catch(()=>{});
  await page.locator('#download').click();
  await page.waitForFunction(()=>window.downloadResult||document.querySelector('#status')?.dataset.state==='error',null,{timeout:480000});
  const state=await page.locator('#status').innerText();
  assert.ok(await page.evaluate(()=>!!window.downloadResult),state);
- const result=await page.evaluate(async()=>{
+ // A completed result must start saving without a second click.
+ await page.waitForTimeout(1000);
+ assert.ok(automaticDownload,'processing must automatically start the browser download without clicking save');
+ const download=await downloadPromise;
+ assert.match(download.suggestedFilename(),/\.mp4$/i);
+ assert.match(await page.locator('#save').innerText(),/重新下载/);
+ assert.match(state,/已自动开始下载/);
+ assert.equal(await page.locator('#preview').isVisible(),true);
+ const result=await page.evaluate(()=>{
   const r=window.downloadResult;
-  const chunks=[];const b=new Uint8Array(await r.blob.arrayBuffer());
-  // Transfer in chunks, not one enormous JSON response.
-  window.testBytes=b;
-  return {size:b.length,duration:r.duration,width:r.width,height:r.height};
+  return {size:r.blob.size,duration:r.duration,width:r.width,height:r.height};
  });
  await mkdir('artifacts',{recursive:true});
- const chunks=[];
- for(let i=0;i<result.size;i+=64*1024) chunks.push(Buffer.from(await page.evaluate(([a,b])=>btoa(String.fromCharCode(...window.testBytes.subarray(a,b))),[i,Math.min(i+64*1024,result.size)]),'base64'));
- await writeFile('artifacts/test-video.mp4',Buffer.concat(chunks));
- await writeFile('artifacts/result.json',JSON.stringify({url:page.url(),...result,state},null,2));
+ await download.saveAs('artifacts/test-video.mp4');
+ assert.equal(await download.failure(),null);
+ assert.ok(result.size>1024,'downloaded MP4 must contain video data');
+ assert.equal((await stat('artifacts/test-video.mp4')).size,result.size,'browser download must match the generated MP4 size');
+ const mp4=await readFile('artifacts/test-video.mp4');
+ const movieHeader=mp4.indexOf(Buffer.from('mvhd'));
+ assert.ok(movieHeader>=4,'downloaded MP4 must contain its movie header');
+ const version=mp4[movieHeader+4];
+ const timescale=mp4.readUInt32BE(movieHeader+(version===1?24:16));
+ const ticks=version===1?Number(mp4.readBigUInt64BE(movieHeader+28)):mp4.readUInt32BE(movieHeader+20);
+ assert.ok(Math.abs(ticks/timescale-result.duration)<0.01,'downloaded MP4 metadata duration must match the verified video duration');
+ assert.deepEqual(errors,[]);
+ await writeFile('artifacts/result.json',JSON.stringify({url:page.url(),filename:download.suggestedFilename(),...result,state},null,2));
  await page.screenshot({path:'artifacts/desktop.png',fullPage:true});
- console.log(JSON.stringify(result));
+ console.log(JSON.stringify({filename:download.suggestedFilename(),...result,state}));
 } finally { await browser.close(); }
