@@ -28,7 +28,7 @@ jobs:
       - name: Prepare static files
         run: |
           mkdir -p _site/src _site/vendor
-          cp index.html style.css app.js download-worker.js _site/
+          cp index.html style.css app.js download-worker.js favicon.svg favicon.ico apple-touch-icon.png _site/
           cp src/core.mjs src/mp4-duration.mjs _site/src/
           cp vendor/*LICENSE* _site/vendor/
           touch _site/.nojekyll
